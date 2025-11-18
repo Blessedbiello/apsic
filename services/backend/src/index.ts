@@ -30,7 +30,7 @@ import { createRejectionRoutes } from './routes/rejection';
 
 // Import middleware
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
-import { requestTimingMiddleware, logger, log } from './lib/observability';
+import { requestTimingMiddleware, log } from './lib/observability';
 
 // Initialize Express app
 const app = express();

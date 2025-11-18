@@ -398,7 +398,6 @@ All you need to do is:
 
 ---
 
-**Built with ❤️ by Claude Code**
 **For:** AI Genesis Hackathon 2025
 **Stack:** Gemini + Opus + Qdrant + Solana + Next.js
 **License:** MIT
