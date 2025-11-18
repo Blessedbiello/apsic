@@ -40,12 +40,18 @@ model Incident {
   urgency             String?     // immediate, within_1_hour, within_24_hours, routine
 
   route               String?     // LogOnly, Review, Escalate, Immediate
-  status              String      @default("processing") // processing, completed, failed
+  status              String      @default("processing") // processing, completed, failed, rejected
 
   extracted_fields    Json?       // Entities, location, parties, etc.
 
   opus_job_id         String?     @unique
   opus_status         String?
+
+  batch_id            String?     // For batch processing
+  batch               Batch?      @relation(fields: [batch_id], references: [id])
+
+  rejection_reason    String?     // If status = rejected
+  correction_data     Json?       // Data for reprocessing
 
   created_at          DateTime    @default(now())
   updated_at          DateTime    @updatedAt
@@ -58,6 +64,7 @@ model Incident {
   @@index([incident_type])
   @@index([created_at])
   @@index([status])
+  @@index([batch_id])
 }
 
 model AuditLog {
@@ -110,5 +117,41 @@ model CreditLedger {
   created_at      DateTime    @default(now())
 
   @@index([wallet_address])
+  @@index([created_at])
+}
+
+model Batch {
+  id                String      @id
+  wallet_address    String
+  total_incidents   Int
+  processed_count   Int         @default(0)
+  failed_count      Int         @default(0)
+  status            String      // processing, completed, failed
+  processing_time_ms Int?
+  performance_metrics Json?     // Parallel vs sequential comparison
+
+  created_at        DateTime    @default(now())
+  completed_at      DateTime?
+
+  incidents         Incident[]
+
+  @@index([wallet_address])
+  @@index([created_at])
+}
+
+model DataImport {
+  id              String      @id @default(cuid())
+  source_type     String      // csv, json, api, sheets
+  source_url      String?
+  total_records   Int
+  imported_count  Int         @default(0)
+  failed_count    Int         @default(0)
+  status          String      // processing, completed, failed
+  batch_id        String?
+
+  created_at      DateTime    @default(now())
+  completed_at    DateTime?
+
+  @@index([status])
   @@index([created_at])
 }
