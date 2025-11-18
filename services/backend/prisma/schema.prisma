@@ -1,0 +1,161 @@
+// Prisma schema for APSIC
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String      @id @default(cuid())
+  wallet_address  String      @unique
+  credits         Int         @default(0)
+  priority_tier   String      @default("standard") // standard, premium, enterprise
+  staked          Boolean     @default(false)
+  created_at      DateTime    @default(now())
+  updated_at      DateTime    @updatedAt
+
+  incidents       Incident[]  @relation("Reporter")
+  reviews         Review[]
+
+  @@index([wallet_address])
+}
+
+model Incident {
+  id                  String      @id @default(cuid())
+  reporter_id         String
+  reporter            User        @relation("Reporter", fields: [reporter_id], references: [id])
+  reporter_wallet     String      // Denormalized for easier querying
+
+  text                String      @db.Text
+  incident_type       String?     // harassment, accident, cyber, infrastructure, medical, other, auto
+  image_urls          String[]    // Array of image URLs
+  audio_urls          String[]    // Array of audio URLs
+  video_urls          String[]    // Array of video URLs
+
+  severity_score      Float?
+  severity_label      String?     // Low, Medium, High, Critical
+
+  summary             String?     @db.Text
+  recommended_actions String[]
+  urgency             String?     // immediate, within_1_hour, within_24_hours, routine
+
+  route               String?     // LogOnly, Review, Escalate, Immediate
+  status              String      @default("processing") // processing, completed, failed, rejected, pending_reprocess
+
+  extracted_fields    Json?       // Entities, location, parties, etc.
+
+  opus_job_id         String?     @unique
+  opus_status         String?
+
+  batch_id            String?     // For batch processing
+  batch               Batch?      @relation(fields: [batch_id], references: [id])
+
+  rejection_reason    String?     // If status = rejected
+  correction_data     Json?       // Data for reprocessing
+
+  created_at          DateTime    @default(now())
+  updated_at          DateTime    @updatedAt
+
+  audit_log           AuditLog?
+  reviews             Review[]
+  similar_incidents   SimilarIncident[]
+
+  @@index([severity_score])
+  @@index([incident_type])
+  @@index([created_at])
+  @@index([status])
+  @@index([batch_id])
+  @@index([reporter_wallet])
+}
+
+model AuditLog {
+  id              String      @id @default(cuid())
+  incident_id     String      @unique
+  incident        Incident    @relation(fields: [incident_id], references: [id], onDelete: Cascade)
+
+  audit_json      Json        @db.JsonB  // Full audit trail
+  pdf_url         String?     // Optional PDF report URL
+
+  created_at      DateTime    @default(now())
+}
+
+model Review {
+  id              String      @id @default(cuid())
+  incident_id     String
+  incident        Incident    @relation(fields: [incident_id], references: [id], onDelete: Cascade)
+
+  reviewer_id     String?
+  reviewer        User?       @relation(fields: [reviewer_id], references: [id])
+
+  review_type     String      // agentic, human
+  decision        String?     // approved, rejected, request_more_info
+  notes           String?     @db.Text
+  confidence      Float?
+
+  created_at      DateTime    @default(now())
+
+  @@index([incident_id])
+}
+
+model SimilarIncident {
+  id                  String      @id @default(cuid())
+  incident_id         String
+  incident            Incident    @relation(fields: [incident_id], references: [id], onDelete: Cascade)
+
+  similar_incident_id String
+  similarity_score    Float
+
+  @@index([incident_id])
+}
+
+model CreditLedger {
+  id              String      @id @default(cuid())
+  wallet_address  String
+  amount          Int         // Positive = add, Negative = deduct
+  transaction_type String     // purchase, incident_processing, refund
+  incident_id     String?
+
+  created_at      DateTime    @default(now())
+
+  @@index([wallet_address])
+  @@index([created_at])
+}
+
+model Batch {
+  id                String      @id
+  wallet_address    String
+  total_incidents   Int
+  processed_count   Int         @default(0)
+  failed_count      Int         @default(0)
+  status            String      // processing, completed, failed
+  processing_time_ms Int?
+  performance_metrics Json?     // Parallel vs sequential comparison
+
+  created_at        DateTime    @default(now())
+  completed_at      DateTime?
+
+  incidents         Incident[]
+
+  @@index([wallet_address])
+  @@index([created_at])
+}
+
+model DataImport {
+  id              String      @id @default(cuid())
+  source_type     String      // csv, json, api, sheets
+  source_url      String?
+  total_records   Int
+  imported_count  Int         @default(0)
+  failed_count    Int         @default(0)
+  status          String      // processing, completed, failed
+  batch_id        String?
+
+  created_at      DateTime    @default(now())
+  completed_at    DateTime?
+
+  @@index([status])
+  @@index([created_at])
+}

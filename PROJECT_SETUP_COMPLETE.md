@@ -295,7 +295,6 @@ Before you start coding:
 
 **Questions?** Refer to the docs or create a GitHub issue.
 
-**Built by:** AI-assisted documentation (Claude)
 **For:** Hackathon teams building AI-powered public safety systems
 **License:** MIT (see LICENSE file)
 
