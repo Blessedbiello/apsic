@@ -151,7 +151,7 @@ app.use('/api/batch', createBatchRoutes(batchService));
 app.use('/api/import', createImportRoutes(importService, batchService));
 app.use('/api/rejection', createRejectionRoutes(rejectionService));
 app.use('/api/credits', createCreditRoutes(creditService));
-app.use('/api/webhooks', createWebhookRoutes());
+app.use('/api/webhooks', createWebhookRoutes(incidentService));
 
 // Metrics endpoint for observability
 app.get('/api/metrics', (req, res) => {

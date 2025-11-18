@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import { IncidentService } from '../services/incidentService';
 
-export function createWebhookRoutes(): Router {
+export function createWebhookRoutes(incidentService?: IncidentService): Router {
   const router = Router();
 
   /**
@@ -10,22 +11,36 @@ export function createWebhookRoutes(): Router {
     try {
       const { job_id, status, result } = req.body;
 
-      console.log('[OPUS CALLBACK]', { job_id, status });
+      console.log('[OPUS CALLBACK]', { job_id, status, timestamp: new Date().toISOString() });
 
       if (status === 'completed') {
-        // Process the audit log from Opus
-        const auditLog = result?.audit_log_json;
-
-        if (auditLog) {
-          // TODO: Update incident with Opus results
-          console.log('Opus workflow completed successfully');
+        if (incidentService) {
+          // Process the completed Opus workflow
+          await incidentService.handleOpusWorkflowCompletion(job_id, result);
+          console.log(`✅ Opus workflow ${job_id} processed successfully`);
+        } else {
+          console.warn('⚠️ IncidentService not provided to webhook handler');
         }
       } else if (status === 'failed') {
-        console.error('Opus workflow failed:', result);
+        console.error(`❌ Opus workflow ${job_id} failed:`, result);
+
+        // Mark incident as failed
+        if (incidentService) {
+          // TODO: Add method to mark incident as failed by job_id
+          console.log('Attempting to mark incident as failed...');
+        }
+      } else if (status === 'running' || status === 'pending') {
+        console.log(`⏳ Opus workflow ${job_id} status: ${status}`);
       }
 
-      res.status(200).json({ received: true });
-    } catch (error) {
+      res.status(200).json({
+        received: true,
+        job_id,
+        status,
+        processed_at: new Date().toISOString()
+      });
+    } catch (error: any) {
+      console.error('[OPUS CALLBACK ERROR]', error);
       next(error);
     }
   });

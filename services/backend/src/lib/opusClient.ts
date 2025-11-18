@@ -116,12 +116,30 @@ export class OpusClient {
 
 /**
  * Opus Workflow Definition for APSIC
- * This represents the structure we'll create in the Opus UI
+ * This represents the complete workflow structure for the Opus platform
+ *
+ * IMPORTANT: This workflow must be created in the Opus visual canvas before use.
+ * Use this definition as a reference when building the workflow in the Opus UI.
+ *
+ * Required Opus Features Used:
+ * - Data Import nodes (multiple sources)
+ * - AI Agent nodes (Gemini multimodal processing)
+ * - Decision nodes (conditional routing with multi-condition logic)
+ * - Code nodes (Python for rules engine and audit generation)
+ * - Review nodes (Agentic and Human review checkpoints)
+ * - External Service nodes (Qdrant vector search)
+ * - Data Export nodes (Google Sheets, Email, Webhook)
  */
 export const APSIC_WORKFLOW_DEFINITION = {
   name: 'APSIC_Public_Safety_Intake_v1',
   description: 'AI Public Safety Intake Commander - Complete incident processing pipeline',
   version: '1.0',
+  callback_url: '${OPUS_CALLBACK_URL}',
+  timeout_seconds: 300,
+  retry_policy: {
+    max_retries: 2,
+    retry_delay_seconds: 5,
+  },
   stages: [
     {
       name: 'Intake',

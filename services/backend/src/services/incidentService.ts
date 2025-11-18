@@ -64,17 +64,89 @@ export class IncidentService {
       },
     });
 
-    // 4. Process asynchronously
-    this.processIncidentAsync(incident.id, submission, startTime).catch((error) => {
-      console.error(`Error processing incident ${incident.id}:`, error);
-      this.markIncidentFailed(incident.id, error.message);
-    });
+    // 4. Process asynchronously - choose Opus or Direct mode
+    const useOpus = process.env.USE_OPUS_WORKFLOW === 'true';
+
+    if (useOpus) {
+      // OPUS WORKFLOW MODE
+      this.processViaOpusWorkflow(incident.id, submission, startTime).catch((error) => {
+        console.error(`Error processing incident ${incident.id} via Opus:`, error);
+        this.markIncidentFailed(incident.id, error.message);
+      });
+    } else {
+      // DIRECT GEMINI MODE (original implementation)
+      this.processIncidentAsync(incident.id, submission, startTime).catch((error) => {
+        console.error(`Error processing incident ${incident.id}:`, error);
+        this.markIncidentFailed(incident.id, error.message);
+      });
+    }
 
     return {
       incident_id: incident.id,
       status: 'processing',
       message: 'Incident submitted successfully. Processing in progress.',
+      processing_mode: useOpus ? 'opus_workflow' : 'direct',
     };
+  }
+
+  /**
+   * Process incident via Opus Workflow
+   */
+  private async processViaOpusWorkflow(
+    incidentId: string,
+    submission: IncidentSubmission,
+    startTime: number
+  ): Promise<void> {
+    try {
+      console.log(`🔄 Starting Opus workflow for incident ${incidentId}`);
+
+      // Prepare payload for Opus workflow
+      const opusPayload = {
+        incident_id: incidentId,
+        text: submission.text,
+        media_urls: [
+          ...(submission.image_urls || []),
+          ...(submission.audio_urls || []),
+          ...(submission.video_urls || []),
+        ],
+        image_urls: submission.image_urls || [],
+        audio_urls: submission.audio_urls || [],
+        video_urls: submission.video_urls || [],
+        reporter_wallet: submission.reporter_wallet,
+        timestamp: new Date().toISOString(),
+        incident_type: submission.incident_type,
+      };
+
+      // Start Opus workflow
+      const workflowResult = await this.opus.startWorkflow(
+        'APSIC_Public_Safety_Intake_v1',
+        opusPayload
+      );
+
+      console.log(`✅ Opus workflow started: Job ID ${workflowResult.job_id}`);
+
+      // Update incident with Opus job ID
+      await prisma.incident.update({
+        where: { id: incidentId },
+        data: {
+          opus_job_id: workflowResult.job_id,
+          opus_status: workflowResult.status,
+        },
+      });
+
+      // The workflow will complete asynchronously and call back via webhook
+      // See webhooks.ts for the callback handler
+    } catch (error: any) {
+      console.error(`❌ Opus workflow error for incident ${incidentId}:`, error);
+
+      // Fall back to direct processing if Opus fails
+      if (process.env.OPUS_FALLBACK_TO_DIRECT === 'true') {
+        console.log(`🔄 Falling back to direct processing for incident ${incidentId}`);
+        await this.processIncidentAsync(incidentId, submission, startTime);
+      } else {
+        throw error;
+      }
+    }
   }
 
   /**
@@ -350,6 +422,103 @@ export class IncidentService {
     };
 
     return teamMap[incidentType] || 'General Support';
+  }
+
+  /**
+   * Handle Opus workflow completion callback
+   */
+  async handleOpusWorkflowCompletion(jobId: string, result: any): Promise<void> {
+    try {
+      console.log(`📥 Processing Opus workflow completion for job ${jobId}`);
+
+      // Find incident by Opus job ID
+      const incident = await prisma.incident.findFirst({
+        where: { opus_job_id: jobId },
+      });
+
+      if (!incident) {
+        console.error(`❌ No incident found for Opus job ${jobId}`);
+        return;
+      }
+
+      const auditLog = result.audit_log_json || result;
+
+      // Extract data from Opus workflow result
+      const extracted = auditLog.processing_pipeline?.understand?.gemini_extraction;
+      const summary = auditLog.processing_pipeline?.understand?.gemini_summary;
+      const routing = auditLog.processing_pipeline?.decide;
+      const similarIncidents = auditLog.similar_incidents || [];
+
+      // Update incident with Opus results
+      await prisma.incident.update({
+        where: { id: incident.id },
+        data: {
+          severity_score: extracted?.severity_score,
+          severity_label: extracted?.severity_label,
+          summary: summary?.summary,
+          recommended_actions: summary?.recommended_actions || [],
+          urgency: summary?.urgency,
+          route: routing?.route,
+          extracted_fields: extracted as any,
+          status: 'completed',
+          opus_status: 'completed',
+        },
+      });
+
+      // Save audit log
+      await prisma.auditLog.create({
+        data: {
+          incident_id: incident.id,
+          audit_json: auditLog as any,
+        },
+      });
+
+      // Generate PDF
+      try {
+        const pdfBuffer = await this.pdfGenerator.generateAuditPDF(auditLog);
+        console.log(`📄 PDF generated for incident ${incident.id}, size: ${pdfBuffer.length} bytes`);
+      } catch (pdfError) {
+        console.error('PDF generation error:', pdfError);
+      }
+
+      // Generate embedding and upsert to Qdrant
+      try {
+        const embeddingText = `${incident.text} ${summary?.summary || ''} ${extracted?.incident_type || ''}`;
+        const embedding = await this.gemini.generateEmbedding(embeddingText);
+
+        await this.qdrant.upsertIncident(incident.id, embedding, {
+          text: incident.text,
+          summary: summary?.summary,
+          severity_score: extracted?.severity_score,
+          severity_label: extracted?.severity_label,
+          incident_type: extracted?.incident_type,
+          timestamp: new Date().toISOString(),
+          route: routing?.route,
+          tags: [extracted?.incident_type, extracted?.severity_label?.toLowerCase()].filter(Boolean),
+        });
+
+        console.log(`🔍 Incident ${incident.id} indexed in Qdrant`);
+      } catch (qdrantError) {
+        console.error('Qdrant indexing error:', qdrantError);
+      }
+
+      // Decrement credits
+      this.solana.decrementMockCredits(incident.reporter_wallet, 1);
+
+      await prisma.creditLedger.create({
+        data: {
+          wallet_address: incident.reporter_wallet,
+          amount: -1,
+          transaction_type: 'incident_processing',
+          incident_id: incident.id,
+        },
+      });
+
+      console.log(`✅ Opus workflow completion processed for incident ${incident.id}`);
+    } catch (error: any) {
+      console.error('Error handling Opus workflow completion:', error);
+      throw error;
+    }
   }
 
   /**
