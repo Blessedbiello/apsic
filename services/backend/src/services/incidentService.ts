@@ -54,13 +54,12 @@ export class IncidentService {
     const incident = await prisma.incident.create({
       data: {
         reporter_id: user.id,
+        reporter_wallet: submission.reporter_wallet,
         text: submission.text,
         incident_type: submission.incident_type === 'auto' ? null : submission.incident_type,
-        media_urls: [
-          ...(submission.image_urls || []),
-          ...(submission.audio_urls || []),
-          ...(submission.video_urls || []),
-        ],
+        image_urls: submission.image_urls || [],
+        audio_urls: submission.audio_urls || [],
+        video_urls: submission.video_urls || [],
         status: 'processing',
       },
     });
